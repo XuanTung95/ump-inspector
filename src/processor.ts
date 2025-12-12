@@ -1,6 +1,7 @@
 import { UmpReader, CompositeBuffer } from 'googlevideo/ump';
 import { u8ToBase64 } from 'googlevideo/utils';
 import type { Part } from 'googlevideo/shared-types';
+import { saveToFile } from "./injected";
 
 import {
   UMPPartId,
@@ -32,6 +33,82 @@ interface ParsedPart {
   data: any;
 }
 
+interface Segment {
+  headerId?: number;
+  mediaHeader: MediaHeader;
+  complete?: boolean;
+  bufferedChunks: Uint8Array[];
+  lastChunkSize: number;
+}
+
+  let formatInitMetadata: FormatInitializationMetadata[] = [];
+  let desiredHeaderId: number | null;
+  let partialSegments = new Map<number, Segment>();
+
+  function handleMediaHeader(part: Part) {
+    const mediaHeader = MediaHeader.decode(part.data.chunks[0])
+
+    if (!mediaHeader) {
+      return undefined;
+    }
+    if (mediaHeader) {
+      const segmentObj = {
+        headerId: mediaHeader.headerId,
+        mediaHeader: mediaHeader,
+        bufferedChunks: [],
+        lastChunkSize: 0
+      };
+      partialSegments.set(<number>mediaHeader.headerId, segmentObj);
+    }
+
+    return mediaHeader;
+  }
+
+  function handleMedia(part: Part) {
+    const headerId = part.data.getUint8(0);
+    const buffer = part.data.split(1).remainingBuffer;
+    const segment = partialSegments.get(headerId);
+    if (segment) {
+      segment.lastChunkSize = buffer.getLength();
+      for (const chunk of buffer.chunks) {
+        segment.bufferedChunks.push(chunk);
+      }
+    }
+    return { headerId: headerId, size: part.data.getLength() };
+  }
+
+  function concatenateChunks(chunks: Uint8Array[]): Uint8Array {
+    const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    const result = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const chunk of chunks) {
+      result.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return result;
+  }
+
+  function saveUint8Array(
+    bytes: Uint8Array,
+    filename: string = "output.bin"
+  ): void {
+    saveToFile(bytes, filename)
+  }
+
+  function handleMediaEnd(part: Part) {
+    const headerId = part.data.getUint8(0);
+    const segment = partialSegments.get(headerId);
+
+    if (segment) {
+      const segmentData = concatenateChunks(segment.bufferedChunks);
+      const name = `media_${segment.mediaHeader.itag}_${segment.mediaHeader.sequenceNumber}.m4s`;
+      console.log(`download ${name} ${segmentData.byteLength}`)
+      saveUint8Array(segmentData, name);
+      partialSegments.delete(headerId)
+    }
+    return { headerId: headerId };
+  }
+
 const umpPartHandlers = new Map<UMPPartId, UmpPartHandler>([
   [ UMPPartId.FORMAT_INITIALIZATION_METADATA, (part: Part) => FormatInitializationMetadata.decode(part.data.chunks[0]) ],
   [ UMPPartId.NEXT_REQUEST_POLICY, (part: Part) => NextRequestPolicy.decode(part.data.chunks[0]) ],
@@ -41,9 +118,9 @@ const umpPartHandlers = new Map<UMPPartId, UmpPartHandler>([
   [ UMPPartId.SABR_CONTEXT_SENDING_POLICY, (part: Part) => SabrContextSendingPolicy.decode(part.data.chunks[0]) ],
   [ UMPPartId.STREAM_PROTECTION_STATUS, (part: Part) => StreamProtectionStatus.decode(part.data.chunks[0]) ],
   [ UMPPartId.RELOAD_PLAYER_RESPONSE, (part: Part) => ReloadPlaybackContext.decode(part.data.chunks[0]) ],
-  [ UMPPartId.MEDIA_HEADER, (part: Part) => MediaHeader.decode(part.data.chunks[0]) ],
-  [ UMPPartId.MEDIA, (part: Part) => ({ headerId: part.data.getUint8(0), size: part.data.getLength() }) ],
-  [ UMPPartId.MEDIA_END, (part: Part) => ({ headerId: part.data.getUint8(0) }) ],
+  [ UMPPartId.MEDIA_HEADER, handleMediaHeader ],
+  [ UMPPartId.MEDIA, handleMedia ],
+  [ UMPPartId.MEDIA_END, handleMediaEnd ],
   [ UMPPartId.PLAYBACK_START_POLICY, (part: Part) => PlaybackStartPolicy.decode(part.data.chunks[0]) ],
   [ UMPPartId.REQUEST_CANCELLATION_POLICY, (part: Part) => RequestCancellationPolicy.decode(part.data.chunks[0]) ],
   [ UMPPartId.REQUEST_IDENTIFIER, (part: Part) => RequestIdentifier.decode(part.data.chunks[0]) ],

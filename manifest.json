@@ -4,6 +4,11 @@
   "version": "1.1.2",
   "author": "LuanRT",
   "description": "A browser extension for inspecting and debugging UMP requests on YouTube.",
+  "permissions": ["downloads", "storage"],
+  "host_permissions": ["*://*.youtube.com/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
   "content_scripts": [
     {
       "matches": [

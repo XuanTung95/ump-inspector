@@ -1,8 +1,7 @@
 function injectScript(): void {
   try {
     const script = document.createElement('script');
-    const runtime = (typeof browser !== 'undefined' ? browser : chrome).runtime;
-    script.src = runtime.getURL('dist/injected.bundle.js');
+    script.src = chrome.runtime.getURL('dist/injected.bundle.js');
     (document.head || document.documentElement).appendChild(script);
     script.onload = () => script.remove();
   } catch (e) {
@@ -16,3 +15,15 @@ function injectScript(): void {
 }
 
 injectScript();
+
+window.addEventListener("message", (event) => {
+  if (!event.data || event.source !== window) return;
+
+  console.log("CONTENT GOT MESSAGE:", event.data);
+
+  if (event.data.type === "SAVE_FILE") {
+    chrome.runtime.sendMessage(event.data, () => {
+      console.log("CONTENT forwarded to BACKGROUND", chrome.runtime.lastError);
+    });
+  }
+});

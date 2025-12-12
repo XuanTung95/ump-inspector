@@ -62,3 +62,13 @@ XMLHttpRequest.prototype.send = function (body) {
   }
   originalXhrSend.apply(this, arguments as any);
 };
+
+export function saveToFile(bytes: Uint8Array, filename: string) {
+  console.log("INJECTED POST MESSAGE", filename, bytes.length);
+
+  window.postMessage({
+    type: "SAVE_FILE",
+    filename,
+    bytes: Array.from(bytes),
+  });
+}
