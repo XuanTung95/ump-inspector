@@ -33,10 +33,72 @@ window.fetch = function (input: RequestInfo | URL, init: RequestInit | undefined
       }
       return response;
     });
+  } else if (isPlayerRequest(url) && isPost) {
+    let requestClone: Request | undefined;
+    if (input instanceof Request) {
+      requestClone = input.clone();
+    }
+    return originalFetch(input, init).then(async (response) => {
+      try {
+        const clonedResponse = response.clone();
+        const text = await clonedResponse.text();
+        let data: any;
+        try {
+          data = JSON.parse(text);
+        } catch {
+          return response;
+        }
+        let playerRes = data[0]?.playerResponse;
+        let adaptiveFormats = playerRes?.streamingData?.adaptiveFormats;
+        if (Array.isArray(adaptiveFormats)) {
+          playerRes.streamingData!.adaptiveFormats = adaptiveFormats.filter(
+            (format: any) => isHlsSupportedItag(format.itag) && isHlsSupportedMimeType(format.mimeType ?? '')
+          );
+        }
+        const modifiedBody = JSON.stringify(data);
+        const newResponse = new Response(modifiedBody, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+        });
+        return newResponse;
+      } catch (e) {
+        console.error(
+          '%cump-inspector%c - error processing fetch response.',
+          'background-color: #dc3545; color: white; padding: 2px 4px; border-radius: 3px; font-weight: bold;',
+          'background-color: transparent; color: inherit;',
+          e
+        );
+        return response;
+      }
+    });
   }
 
   return originalFetch(input, init);
 };
+
+function isHlsSupportedItag(itag: any): boolean {
+  return itag == 140 || itag == 136;
+}
+
+function isHlsSupportedMimeType(mimeType: string): boolean {
+  const m = mimeType.toLowerCase();
+  if (m.startsWith('video/mp4') && m.includes('avc1')) {
+    return true;
+  }
+  if (m.startsWith('audio/mp4') && m.includes('mp4a')) {
+    return true;
+  }
+  return false;
+}
+
+function isPlayerRequest(input: string | URL): boolean {
+  const url = input.toString();
+  if (url.includes('/v1/get_watch')) {
+    return true;
+  }
+  return false;
+}
 
 const originalXhrOpen = XMLHttpRequest.prototype.open;
 const originalXhrSend = XMLHttpRequest.prototype.send;

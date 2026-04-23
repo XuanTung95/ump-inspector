@@ -132,6 +132,7 @@ const umpPartHandlers = new Map<UMPPartId, UmpPartHandler>([
   [ UMPPartId.FORMAT_SELECTION_CONFIG, (part: Part) => FormatSelectionConfig.decode(part.data.chunks[0]) ]
 ]);
 
+/// start decodeRaw
 function getWireTypeName(wireType: number): string {
   switch (wireType) {
     case 0:
@@ -292,6 +293,7 @@ function decodeRaw(buffer: Uint8Array): any[] {
 
   return result;
 }
+/// End decodeRaw
 
 export function processUmpResponse(url: string, requestBody: ArrayBuffer, responseBuffer: ArrayBuffer): void {
   const colors = getPalette();
