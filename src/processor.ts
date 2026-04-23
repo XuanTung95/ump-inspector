@@ -2,6 +2,7 @@ import { UmpReader, CompositeBuffer } from 'googlevideo/ump';
 import { u8ToBase64 } from 'googlevideo/utils';
 import type { Part } from 'googlevideo/shared-types';
 import { saveToFile } from "./injected";
+import protobuf from "protobufjs/minimal";
 
 import {
   UMPPartId,
@@ -131,11 +132,153 @@ const umpPartHandlers = new Map<UMPPartId, UmpPartHandler>([
   [ UMPPartId.FORMAT_SELECTION_CONFIG, (part: Part) => FormatSelectionConfig.decode(part.data.chunks[0]) ]
 ]);
 
+function getWireTypeName(wireType: any): any {
+  switch (wireType) {
+    case 0:
+      return "varint";
+    case 1:
+      return "fixed64";
+    case 2:
+      return "length-delimited";
+    case 3:
+      return "start-group";
+    case 4:
+      return "end-group";
+    case 5:
+      return "fixed32";
+    default:
+      return `unknown(${wireType})`;
+  }
+}
+
+function decodeRaw(buffer: any): any {
+  const reader = protobuf.Reader.create(buffer);
+  const result = [];
+
+  while (reader.pos < reader.len) {
+    const tag = reader.uint32();
+    const fieldNumber = tag >>> 3;
+    const wireType = tag & 7;
+    const wireTypeName = getWireTypeName(wireType);
+
+    let value;
+
+    switch (wireType) {
+      case 0: { // varint
+        value = reader.uint64().toString();
+        break;
+      }
+
+      case 1: { // fixed64
+        value = reader.fixed64().toString();
+        break;
+      }
+
+      case 2: { // length-delimited
+        const len = reader.uint32();
+        const start = reader.pos;
+        const end = start + len;
+        const subBuf = reader.buf.slice(start, end);
+
+        let isNested = false;
+        try {
+          const testReader = protobuf.Reader.create(subBuf);
+          while (testReader.pos < testReader.len) {
+            const innerTag = testReader.uint32();
+            const innerWireType = innerTag & 7;
+
+            if (![0, 1, 2, 5].includes(innerWireType)) {
+              isNested = false;
+              break;
+            }
+
+            switch (innerWireType) {
+              case 0:
+                testReader.uint64();
+                break;
+              case 1:
+                testReader.fixed64();
+                break;
+              case 2: {
+                const innerLen = testReader.uint32();
+                testReader.pos += innerLen;
+                break;
+              }
+              case 5:
+                testReader.fixed32();
+                break;
+            }
+          }
+
+          if (testReader.pos === testReader.len && subBuf.length > 0) {
+            isNested = true;
+          }
+        } catch {
+          isNested = false;
+        }
+
+        if (isNested) {
+          value = {
+            type: "message",
+            fields: decodeRaw(subBuf),
+          };
+        } else {
+          try {
+            const text = new TextDecoder().decode(subBuf);
+            if (/^[\x20-\x7E\r\n\t]+$/.test(text)) {
+              value = {
+                type: "string",
+                data: text,
+              };
+            } else {
+              throw new Error();
+            }
+          } catch {
+            value = {
+              type: "bytes",
+              length: len,
+              hex: Array.from(subBuf)
+                .map(x => x.toString(16).padStart(2, "0"))
+                .join(" "),
+            };
+          }
+        }
+
+        reader.pos = end;
+        break;
+      }
+
+      case 5: { // fixed32
+        value = reader.fixed32();
+        break;
+      }
+
+      default: {
+        value = {
+          type: "unsupported",
+          note: `wire type ${wireType} is not handled`,
+        };
+        break;
+      }
+    }
+
+    result.push({
+      field: fieldNumber,
+      wireType,
+      wireTypeName,
+      value,
+    });
+  }
+  return result;
+}
+
 export function processUmpResponse(url: string, requestBody: ArrayBuffer, responseBuffer: ArrayBuffer): void {
   const colors = getPalette();
   try {
     const requestURL = new URL(url);
     const isOnesie = requestURL.pathname === '/initplayback';
+    let ret = decodeRaw(new Uint8Array(requestBody));
+    console.warn('Request', ret);
     const payloadBuffer = new Uint8Array(requestBody);
 
     const decodedRequestPayload =

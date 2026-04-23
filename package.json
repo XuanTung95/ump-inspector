@@ -31,6 +31,7 @@
     "webpack-dev-server": "^5.2.1"
   },
   "dependencies": {
-    "googlevideo": "^4.0.4"
+    "googlevideo": "^4.0.4",
+    "protobufjs": "^8.0.1"
   }
 }
