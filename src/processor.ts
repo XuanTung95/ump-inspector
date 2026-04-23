@@ -132,7 +132,7 @@ const umpPartHandlers = new Map<UMPPartId, UmpPartHandler>([
   [ UMPPartId.FORMAT_SELECTION_CONFIG, (part: Part) => FormatSelectionConfig.decode(part.data.chunks[0]) ]
 ]);
 
-function getWireTypeName(wireType: any): any {
+function getWireTypeName(wireType: number): string {
   switch (wireType) {
     case 0:
       return "varint";
@@ -151,9 +151,9 @@ function getWireTypeName(wireType: any): any {
   }
 }
 
-function decodeRaw(buffer: any): any {
+function decodeRaw(buffer: Uint8Array): any[] {
   const reader = protobuf.Reader.create(buffer);
-  const result = [];
+  const result: any[] = [];
 
   while (reader.pos < reader.len) {
     const tag = reader.uint32();
@@ -161,20 +161,20 @@ function decodeRaw(buffer: any): any {
     const wireType = tag & 7;
     const wireTypeName = getWireTypeName(wireType);
 
-    let value;
+    let value: any;
 
     switch (wireType) {
-      case 0: { // varint
+      case 0: {
         value = reader.uint64().toString();
         break;
       }
 
-      case 1: { // fixed64
+      case 1: {
         value = reader.fixed64().toString();
         break;
       }
 
-      case 2: { // length-delimited
+      case 2: {
         const len = reader.uint32();
         const start = reader.pos;
         const end = start + len;
@@ -183,12 +183,16 @@ function decodeRaw(buffer: any): any {
         let isNested = false;
         try {
           const testReader = protobuf.Reader.create(subBuf);
+          let hasField = false;
+          let valid = true;
+
           while (testReader.pos < testReader.len) {
             const innerTag = testReader.uint32();
+            const innerFieldNumber = innerTag >>> 3;
             const innerWireType = innerTag & 7;
 
-            if (![0, 1, 2, 5].includes(innerWireType)) {
-              isNested = false;
+            if (innerFieldNumber <= 0 || ![0, 1, 2, 5].includes(innerWireType)) {
+              valid = false;
               break;
             }
 
@@ -201,6 +205,10 @@ function decodeRaw(buffer: any): any {
                 break;
               case 2: {
                 const innerLen = testReader.uint32();
+                if (testReader.pos + innerLen > testReader.len) {
+                  valid = false;
+                  break;
+                }
                 testReader.pos += innerLen;
                 break;
               }
@@ -208,9 +216,12 @@ function decodeRaw(buffer: any): any {
                 testReader.fixed32();
                 break;
             }
+
+            if (!valid) break;
+            hasField = true;
           }
 
-          if (testReader.pos === testReader.len && subBuf.length > 0) {
+          if (valid && hasField && testReader.pos === testReader.len && subBuf.length > 0) {
             isNested = true;
           }
         } catch {
@@ -234,12 +245,21 @@ function decodeRaw(buffer: any): any {
               throw new Error();
             }
           } catch {
+            let base64: string;
+            if (typeof btoa === "function") {
+              let binary = "";
+              for (let i = 0; i < subBuf.length; i++) {
+                binary += String.fromCharCode(subBuf[i]);
+              }
+              base64 = btoa(binary);
+            } else {
+              base64 = "";
+            }
+
             value = {
               type: "bytes",
               length: len,
-              hex: Array.from(subBuf)
-                .map(x => x.toString(16).padStart(2, "0"))
-                .join(" "),
+              base64,
             };
           }
         }
@@ -248,7 +268,7 @@ function decodeRaw(buffer: any): any {
         break;
       }
 
-      case 5: { // fixed32
+      case 5: {
         value = reader.fixed32();
         break;
       }
@@ -264,11 +284,12 @@ function decodeRaw(buffer: any): any {
 
     result.push({
       field: fieldNumber,
-      wireType,
-      wireTypeName,
+      // wireType,
+      // wireTypeName,
       value,
     });
   }
+
   return result;
 }
 
